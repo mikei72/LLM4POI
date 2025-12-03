@@ -4,7 +4,7 @@ import json
 import shapely
 from utils import get_root_dir
 
-data_path = osp.join(get_root_dir(), 'data', 'ca', 'raw')
+data_path = osp.join(get_root_dir(), 'datasets', 'ca')
 raw_checkins = pd.read_csv(osp.join(data_path, 'loc-gowalla_totalCheckins.txt'), sep='\t', header=None)
 raw_checkins.columns = ['userid', 'datetime', 'checkins_lat', 'checkins_lng', 'id']
 subset1 = pd.read_csv(osp.join(data_path, 'gowalla_spots_subset1.csv'))
