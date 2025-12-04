@@ -7,11 +7,10 @@ import os.path as osp
 
 
 def get_root_dir():
-    dirname = os.getcwd()
-    dirname_split = dirname.split("/")
-    index = dirname_split.index("preprocessing")
-    dirname = "/".join(dirname_split[:index + 1])
-    return dirname
+    dirname = os.path.dirname(os.path.abspath(__file__))
+    parts = dirname.split(os.sep)
+    index = parts.index("preprocessing")
+    return os.sep.join(parts[:index + 1])
 
 
 def set_logger(args):

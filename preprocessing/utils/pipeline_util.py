@@ -4,12 +4,12 @@ import logging
 import numpy as np
 from tqdm import tqdm
 import os.path as osp
-from metric import (
+"""from metric import (
     recall,
     ndcg,
     map_k,
     mrr
-)
+)"""
 
 
 def save_model(model, optimizer, save_variable_list, run_args, argparse_dict):

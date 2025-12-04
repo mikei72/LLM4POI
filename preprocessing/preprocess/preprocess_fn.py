@@ -20,18 +20,23 @@ def id_encode(
     """
     id_le = LabelEncoder()
     id_le = id_le.fit(fit_df[column].values.tolist())
+
+    classes = id_le.classes_
+    class_to_index = {v: idx for idx, v in enumerate(classes)}
+
     if padding == 0:
-        padding_id = padding
+        padding_id = 0
         encode_df[column] = [
-            id_le.transform([i])[0] + 1 if i in id_le.classes_ else padding_id
-            for i in encode_df[column].values.tolist()
+            class_to_index[i] + 1 if i in class_to_index else padding_id
+            for i in encode_df[column].values
         ]
     else:
-        padding_id = len(id_le.classes_)
+        padding_id = len(classes)
         encode_df[column] = [
-            id_le.transform([i])[0] if i in id_le.classes_ else padding_id
-            for i in encode_df[column].values.tolist()
+            class_to_index[i] if i in class_to_index else padding_id
+            for i in encode_df[column].values
         ]
+
     return id_le, padding_id
 
 

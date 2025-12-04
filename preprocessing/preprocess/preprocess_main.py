@@ -31,25 +31,31 @@ def preprocess_nyc(path: bytes, preprocessed_path: bytes) -> pd.DataFrame:
         'pseudo_session_trajectory_id', 'UTCTimeOffsetNormDayShift', 'UTCTimeOffsetNormRelativeTime', 'SplitTag'
     ]
 
-    # data transformation
+    print("data transformation")
     df['trajectory_id'] = df['pseudo_session_trajectory_id']
-    df['UTCTimeOffset'] = df['UTCTimeOffset'].apply(lambda x: datetime.strptime(x[:19], "%Y-%m-%d %H:%M:%S"))
-    df['UTCTimeOffsetEpoch'] = df['UTCTimeOffset'].apply(lambda x: x.strftime('%s'))
+    df['UTCTimeOffset'] = pd.to_datetime(df['UTCTimeOffset'].str[:19], format="%Y-%m-%d %H:%M:%S")
+    df['UTCTimeOffsetEpoch'] = df['UTCTimeOffset'].astype("int64") // 1_000_000_000
     df['UTCTimeOffsetWeekday'] = df['UTCTimeOffset'].apply(lambda x: x.weekday())
     df['UTCTimeOffsetHour'] = df['UTCTimeOffset'].apply(lambda x: x.hour)
     df['UTCTimeOffsetDay'] = df['UTCTimeOffset'].apply(lambda x: x.strftime('%Y-%m-%d'))
     df['UserRank'] = df.groupby('UserId')['UTCTimeOffset'].rank(method='first')
     df = df.sort_values(by=['UserId', 'UTCTimeOffset'], ascending=True)
 
-    # id encoding
+    print("id encoding")
     df['check_ins_id'] = df['UTCTimeOffset'].rank(ascending=True, method='first') - 1
-    traj_id_le, padding_traj_id = id_encode(df, df, 'pseudo_session_trajectory_id')
+    print("1")
+    # traj_id_le, padding_traj_id = id_encode(df, df, 'pseudo_session_trajectory_id')
 
     df_train = df[df['SplitTag'] == 'train']
+    print("2")
     poi_id_le, padding_poi_id = id_encode(df_train, df, 'PoiId')
+    print("3")
     poi_category_le, padding_poi_category = id_encode(df_train, df, 'PoiCategoryId')
+    print("4")
     user_id_le, padding_user_id = id_encode(df_train, df, 'UserId')
+    print("5")
     hour_id_le, padding_hour_id = id_encode(df_train, df, 'UTCTimeOffsetHour')
+    print("6")
     weekday_id_le, padding_weekday_id = id_encode(df_train, df, 'UTCTimeOffsetWeekday')
 
     # save mapping logic

@@ -36,9 +36,9 @@ run ```python traj_qk.py```
 
 ```cd ..```
 
-run ```python traj_sim --dataset_name {dataset_name} --model_path {your_model_path}```
+run ```python traj_sim.py --dataset_name {dataset_name} --model_path {your_model_path}```
 
-run ```python preprocessing/to_nextpoi_qkt.py --dataset_name {dataset_name}```
+run ```python preprocessing/to_nextpoi_kqt.py -dataset_name {dataset_name}```
 
 
 # Main Performance

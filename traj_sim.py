@@ -84,7 +84,7 @@ def parse_config():
     parser.add_argument('--peft_model', type=str, default=None, help='')
     parser.add_argument('--flash_attn', type=bool, default=True, help='')
     parser.add_argument('--data_path', type=str, default="./test.bin", help='')
-    parser.add_argument('--output_dir', type=str, default="/g/data/hn98/peibo/next-poi/outputmodels/finetune-31/",
+    parser.add_argument('--output_dir', type=str, default="/outputmodels/finetune-31/",
                         help='')
     parser.add_argument('--dataset_name', type=str, default="nyc",
                         help='')
@@ -172,13 +172,13 @@ def main(args):
     random.seed(seed)
     np.random.seed(seed)
 
-    model_path = '/g/data/hn98/models/llama2/llama-2-7b-longlora-32k-ft/'
+    model_path = 'model/Llama-2-7b-longlora-32k-ft'
     output_dir = args.output_dir
     print("data path", args.data_path)
     print("base model", model_path)
     print("peft model", output_dir)
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
+    tokenizer = transformers.LlamaTokenizer.from_pretrained(
         model_path,
         model_max_length=32768,
         padding_side="right",
@@ -212,15 +212,7 @@ def main(args):
         device_map='auto',
         config=config,
         cache_dir=None,
-        torch_dtype=torch.bfloat16,
-        quantization_config=BitsAndBytesConfig(
-            load_in_4bit=True,
-            llm_int8_threshold=6.0,
-            llm_int8_has_fp16_weight=False,
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-        ),
+        torch_dtype=torch.float16,
     )
     model.resize_token_embeddings(32001)
 
@@ -253,7 +245,7 @@ def main(args):
     model = get_peft_model(model, config)
     model.eval()
 
-    data_path = f'datasets/processed/{args.dataset_name}/'
+    data_path = f'datasets/{args.dataset_name}/preprocessed/'
 
     def compute_fea(train=True):
         key_query_traj = {}
@@ -267,15 +259,30 @@ def main(args):
             list_data_dict = jload(data_path + f'{output}_kq_pairs.json')
         for e in tqdm(list_data_dict, desc="Processing lines", total=len(list_data_dict)):
             try:
-                key = tokenizer(e['key'], return_tensors="pt").to(device)
-                key = model(**key)
-                key = compute_features(key.hidden_states[-1], key.attentions[-1]).cpu().detach()
+                key_in = tokenizer(e['key'], return_tensors="pt")
+                key_in = {k: v.to(device) for k, v in key_in.items()}
+
+                key_out = model(
+                    **key_in,
+                    output_hidden_states=True,
+                    output_attentions=True
+                )
+                key_feat = compute_features(key_out.hidden_states[-1], key_out.attentions[-1]).cpu().detach()
                 torch.cuda.empty_cache()
-                query = tokenizer(e['query'], return_tensors="pt").to('cuda:1')
-                query = model(**query)
-                query = compute_features(query.hidden_states[-1], query.attentions[-1]).cpu().detach()
+
+                query_in = (tokenizer(e['query'], return_tensors="pt"))
+                query_in = {k: v.to(device) for k, v in query_in.items()}
+
+                query_out = model(
+                    **query_in,
+                    output_hidden_states=True,
+                    output_attentions=True
+                )
+
+                query_feat = compute_features(query_out.hidden_states[-1], query_out.attentions[-1]).cpu().detach()
                 torch.cuda.empty_cache()
-                key_query_traj[e['traj_id']] = {'key': key, 'query': query, 'start_time': e['start_time'], 'end_time':e['end_time']}
+
+                key_query_traj[e['traj_id']] = {'key': key_feat, 'query': query_feat, 'start_time': e['start_time'], 'end_time':e['end_time']}
             except Exception as ex:
                 print(f"An error occurred: {ex}")  # Log the exception
                 continue
