@@ -268,29 +268,25 @@ def main(args):
             list_data_dict = jload(data_path + f'{output}_kq_pairs.json')
         for e in tqdm(list_data_dict, desc="Processing lines", total=len(list_data_dict)):
             try:
-                key_in = tokenizer(e['key'], return_tensors="pt")
-                key_in = {k: v.to(device) for k, v in key_in.items()}
-
-                key_out = model(
-                    **key_in,
+                key = tokenizer(e['key'], return_tensors="pt").to(device)
+                key = model(
+                    **key,
                     output_hidden_states=True,
                     output_attentions=True
                 )
-                key_feat = compute_features(key_out.hidden_states[-1], key_out.attentions[-1]).cpu().detach()
+                key = compute_features(key.hidden_states[-1], key.attentions[-1]).cpu().detach()
                 torch.cuda.empty_cache()
 
-                query_in = (tokenizer(e['query'], return_tensors="pt"))
-                query_in = {k: v.to(device) for k, v in query_in.items()}
-
-                query_out = model(
-                    **query_in,
+                query = tokenizer(e['query'], return_tensors="pt").to('cuda:0')
+                query = model(
+                    **query,
                     output_hidden_states=True,
                     output_attentions=True
                 )
-                query_feat = compute_features(query_out.hidden_states[-1], query_out.attentions[-1]).cpu().detach()
+                query = compute_features(query.hidden_states[-1], query.attentions[-1]).cpu().detach()
                 torch.cuda.empty_cache()
 
-                key_query_traj[e['traj_id']] = {'key': key_feat, 'query': query_feat, 'start_time': e['start_time'], 'end_time':e['end_time']}
+                key_query_traj[e['traj_id']] = {'key': key, 'query': query, 'start_time': e['start_time'], 'end_time':e['end_time']}
             except Exception as ex:
                 print(f"An error occurred: {ex}")  # Log the exception
                 continue
