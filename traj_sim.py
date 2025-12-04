@@ -163,6 +163,26 @@ def compute_features(hidden, attention):
     return weighted_hidden_states
 
 
+def model_forward_in_chunks(text, tokenizer, model, device, chunk_size=8192):
+    tokens = tokenizer(text, return_tensors="pt", add_special_tokens=False)
+    input_ids = tokens["input_ids"][0]
+
+    chunks = []
+    for i in range(0, len(input_ids), chunk_size):
+        chunk_ids = input_ids[i:i+chunk_size]
+        chunk_ids = chunk_ids.unsqueeze(0).to(device)
+
+        out = model(chunk_ids, 
+                    output_hidden_states=True,
+                    output_attentions=True)
+        # 提取每段的 hidden state
+        chunks.append(out.hidden_states[-1])
+
+    # 拼接所有 chunk 的隐藏向量
+    full_hidden = torch.cat(chunks, dim=1)
+    return full_hidden
+
+
 def main(args):
     device = "cuda:0"
     seed = 2
@@ -180,7 +200,8 @@ def main(args):
 
     tokenizer = transformers.LlamaTokenizer.from_pretrained(
         model_path,
-        model_max_length=32768,
+        # model_max_length=32768,
+        model_max_length=8192,
         padding_side="right",
         use_fast=True,
     )
@@ -201,10 +222,12 @@ def main(args):
     )
 
     context_size = args.context_size if args.context_size > 0 else args.seq_len
-    orig_ctx_len = getattr(config, "max_position_embeddings", None)  # this value should be 4096 for LLaMA2 models
+
+    # 不再扩 RoPE，因为用 chunk 代替全局上下文
+    """orig_ctx_len = getattr(config, "max_position_embeddings", None)  # this value should be 4096 for LLaMA2 models
     if orig_ctx_len and context_size > orig_ctx_len:
         scaling_factor = float(math.ceil(context_size / orig_ctx_len))
-        config.rope_scaling = {"type": "linear", "factor": scaling_factor}
+        config.rope_scaling = {"type": "linear", "factor": scaling_factor}"""
 
     # Load model and tokenizer
     model = transformers.AutoModelForCausalLM.from_pretrained(
@@ -212,6 +235,7 @@ def main(args):
         device_map='auto',
         config=config,
         cache_dir=None,
+        # torch_dtype=torch.float16,
         torch_dtype=torch.bfloat16,
         quantization_config=BitsAndBytesConfig(
             load_in_4bit=True,
@@ -267,7 +291,7 @@ def main(args):
             list_data_dict = jload(data_path + f'{output}_kq_pairs.json')
         for e in tqdm(list_data_dict, desc="Processing lines", total=len(list_data_dict)):
             try:
-                key_in = tokenizer(e['key'], return_tensors="pt")
+                """key_in = tokenizer(e['key'], return_tensors="pt")
                 key_in = {k: v.to(device) for k, v in key_in.items()}
 
                 key_out = model(
@@ -275,10 +299,15 @@ def main(args):
                     output_hidden_states=True,
                     output_attentions=True
                 )
-                key_feat = compute_features(key_out.hidden_states[-1], key_out.attentions[-1]).cpu().detach()
+                key_feat = compute_features(key_out.hidden_states[-1], key_out.attentions[-1]).cpu().detach()"""
+                key_hidden = model_foward_in_chunks(
+                    e['key'], tokenizer, model, device,
+                    chunk_size=8192
+                )
+                key_feat = compute_features(key_hidden, None)
                 torch.cuda.empty_cache()
 
-                query_in = (tokenizer(e['query'], return_tensors="pt"))
+                """query_in = (tokenizer(e['query'], return_tensors="pt"))
                 query_in = {k: v.to(device) for k, v in query_in.items()}
 
                 query_out = model(
@@ -286,8 +315,12 @@ def main(args):
                     output_hidden_states=True,
                     output_attentions=True
                 )
-
-                query_feat = compute_features(query_out.hidden_states[-1], query_out.attentions[-1]).cpu().detach()
+                query_feat = compute_features(query_out.hidden_states[-1], query_out.attentions[-1]).cpu().detach()"""
+                query_hidden = model_foward_in_chunks(
+                    e['query'], tokenizer, model, device,
+                    chunk_size=8192
+                )
+                query_feat = compute_features(query_hidden, None)
                 torch.cuda.empty_cache()
 
                 key_query_traj[e['traj_id']] = {'key': key_feat, 'query': query_feat, 'start_time': e['start_time'], 'end_time':e['end_time']}
