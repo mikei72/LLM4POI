@@ -17,8 +17,8 @@ import torch.nn as nn
 import transformers
 from torch.utils.data import Dataset
 from transformers import Trainer, DataCollatorForLanguageModeling, BitsAndBytesConfig
-from llama_attn_replace_sft import replace_llama_attn
-from gptneox_attn_replace import replace_gpt_neox_attn
+# from llama_attn_replace_sft import replace_llama_attn
+# from gptneox_attn_replace import replace_gpt_neox_attn
 from peft import LoraConfig, get_peft_model
 from torch.distributed import barrier
 import torch.nn.functional as F
@@ -84,7 +84,7 @@ def parse_config():
     parser.add_argument('--peft_model', type=str, default=None, help='')
     parser.add_argument('--flash_attn', type=bool, default=True, help='')
     parser.add_argument('--data_path', type=str, default="./test.bin", help='')
-    parser.add_argument('--output_dir', type=str, default="/outputmodels/finetune-31/",
+    parser.add_argument('--output_dir', type=str, default="/g/data/hn98/peibo/next-poi/outputmodels/finetune-31/",
                         help='')
     parser.add_argument('--dataset_name', type=str, default="nyc",
                         help='')
@@ -149,18 +149,10 @@ def iceildiv(x, y):
 
 def compute_features(hidden, attention):
     averaged_attention = attention.mean(dim=1)
-    weighted_hidden_states = torch.zeros_like(hidden)
-    batch_size, sequence_length, hidden_size = hidden.shape
-    for i in range(batch_size):
-        # For each example, perform a weighted sum of hidden states
-        # based on the attention weights
-        for j in range(sequence_length):
-            weighted_hidden_states[i, j, :] = torch.matmul(
-                averaged_attention[i, j, :],
-                hidden[i, :, :]
-            )
-    weighted_hidden_states = weighted_hidden_states.mean(axis=[0, 1])
-    return weighted_hidden_states
+    weighted_hidden_states = torch.bmm(averaged_attention, hidden)
+    final_feature = weighted_hidden_states.mean(dim=1)
+    
+    return final_feature
 
 
 def main(args):
@@ -172,13 +164,13 @@ def main(args):
     random.seed(seed)
     np.random.seed(seed)
 
-    model_path = 'model/Llama-2-7b-longlora-32k-ft'
+    model_path = 'model/Llama-2-7b-longlora-32k-ft/'
     output_dir = args.output_dir
     print("data path", args.data_path)
     print("base model", model_path)
     print("peft model", output_dir)
 
-    tokenizer = transformers.LlamaTokenizer.from_pretrained(
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_path,
         model_max_length=32768,
         padding_side="right",
@@ -212,7 +204,6 @@ def main(args):
         device_map='auto',
         config=config,
         cache_dir=None,
-        # torch_dtype=torch.float16,
         torch_dtype=torch.bfloat16,
         quantization_config=BitsAndBytesConfig(
             load_in_4bit=True,
@@ -262,34 +253,75 @@ def main(args):
             output = 'train'
         else:
             output = 'test'
-        if train:
-            list_data_dict = jload(data_path + f'{output}_kq_pairs.json')
-        else:
-            list_data_dict = jload(data_path + f'{output}_kq_pairs.json')
-        for e in tqdm(list_data_dict, desc="Processing lines", total=len(list_data_dict)):
-            try:
-                key = tokenizer(e['key'], return_tensors="pt").to(device)
-                key = model(
-                    **key,
-                    output_hidden_states=True,
-                    output_attentions=True
-                )
-                key = compute_features(key.hidden_states[-1], key.attentions[-1]).cpu().detach()
-                torch.cuda.empty_cache()
+        model.eval()
 
-                query = tokenizer(e['query'], return_tensors="pt").to('cuda:0')
-                query = model(
-                    **query,
-                    output_hidden_states=True,
-                    output_attentions=True
-                )
-                query = compute_features(query.hidden_states[-1], query.attentions[-1]).cpu().detach()
-                torch.cuda.empty_cache()
-
-                key_query_traj[e['traj_id']] = {'key': key, 'query': query, 'start_time': e['start_time'], 'end_time':e['end_time']}
-            except Exception as ex:
-                print(f"An error occurred: {ex}")  # Log the exception
-                continue
+        # 获取当前模型的主设备，避免硬编码
+        main_device = model.device 
+    
+        list_data_dict = jload(data_path + f'{output}_kq_pairs.json')
+        
+        # 加上这个上下文管理器！！！
+        with torch.no_grad(): 
+            for e in tqdm(list_data_dict, desc="Processing lines", total=len(list_data_dict)):
+                try:
+                    # --------------- 处理 KEY ---------------
+                    # 统一使用 main_device
+                    key_inputs = tokenizer(e['key'], return_tensors="pt").to(main_device)
+                    
+                    # 检查序列长度，如果太长，为了防止OOM，可能需要截断
+                    if key_inputs.input_ids.shape[1] > 4096: # 这里的阈值根据你的显存情况调整
+                         print(f"Skipping too long sequence: {key_inputs.input_ids.shape[1]}")
+                         continue
+    
+                    # 显式指定只返回我们需要的东西，尽量减少中间变量
+                    key_outputs = model(**key_inputs, output_hidden_states=True, output_attentions=True)
+                    
+                    # 立即提取需要的数据，只取最后一层 attention 以节省显存
+                    # 注意：hidden_states[-1] 是最后一层，attentions[-1] 也是最后一层
+                    k_hidden = key_outputs.hidden_states[-1]
+                    k_attn = key_outputs.attentions[-1]
+                    
+                    # 计算特征并立即转回 CPU，断开显存占用
+                    key_vec = compute_features(k_hidden, k_attn).cpu()
+                    
+                    # 手动删除大对象引用
+                    del key_outputs, k_hidden, k_attn, key_inputs
+                    
+                    # --------------- 处理 QUERY ---------------
+                    query_inputs = tokenizer(e['query'], return_tensors="pt").to(main_device)
+                    
+                    query_outputs = model(**query_inputs, output_hidden_states=True, output_attentions=True)
+                    
+                    q_hidden = query_outputs.hidden_states[-1]
+                    q_attn = query_outputs.attentions[-1]
+                    
+                    query_vec = compute_features(q_hidden, q_attn).cpu()
+                    
+                    del query_outputs, q_hidden, q_attn, query_inputs
+    
+                    # --------------- 存储 ---------------
+                    key_query_traj[e['traj_id']] = {
+                        'key': key_vec, 
+                        'query': query_vec, 
+                        'start_time': e['start_time'], 
+                        'end_time': e['end_time']
+                    }
+    
+                    # 定期清理显存缓存（可选，过于频繁会降速，每10-50个做一次即可）
+                    # if len(key_query_traj) % 50 == 0:
+                    #     torch.cuda.empty_cache()
+    
+                except RuntimeError as oom_error:
+                    if "out of memory" in str(oom_error):
+                        print(f"| WARNING: OOM detected for traj_id {e.get('traj_id')}. Skipping.")
+                        torch.cuda.empty_cache() # 发生OOM时必须清理
+                        continue
+                    else:
+                        print(f"An error occurred: {oom_error}")
+                        continue
+                except Exception as ex:
+                    print(f"An error occurred: {ex}")
+                    continue
 
         with open(data_path + f'{output}_kqt.pkl', 'wb') as fp:
             pkl.dump(key_query_traj, fp)

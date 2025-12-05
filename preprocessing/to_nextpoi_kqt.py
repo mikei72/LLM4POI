@@ -67,7 +67,7 @@ def generate_qa_pairs(main_data, kqt=None, historical_data=None, args=None):
 
             # Create the final question string
             question = " ".join(question_parts)
-            value = {'NYC': 4981, 'TKY': 7833, 'CA': 9690}[args.dataset_name]
+            value = {'nyc': 4981, 'tky': 7833, 'ca': 9690}[args.dataset_name]
             question += f" Given the data, At {user_trajectory_data.iloc[-1]['UTCTimeOffset']}, Which POI id will user {user} visit? Note that POI id is an integer in the range from 0 to {value}."
 
             # Form the answer based on the last entry of the current trajectory
@@ -96,7 +96,7 @@ def main():
     parser = argparse.ArgumentParser(description="Process dataset names.")
 
     # Add an argument for the dataset name
-    parser.add_argument("-dataset_name", type=str, choices=['ca', 'nyc', 'tky'],
+    parser.add_argument("--dataset_name", type=str, choices=['ca', 'nyc', 'tky'],
                         help="Name of the dataset (e.g., ca, nyc, tky)")
 
     # Parse the arguments
@@ -104,7 +104,7 @@ def main():
 
     # Your processing code here
     print(f"Processing dataset: {args.dataset_name}")
-    path = f'../datasets/{args.dataset_name}/preprocessed/'
+    path = f'datasets/{args.dataset_name}/preprocessed/'
     # Read the data
     train_data = pd.read_csv(f'{path}train_sample.csv')
     test_data = pd.read_csv(f'{path}test_sample_with_traj.csv')
